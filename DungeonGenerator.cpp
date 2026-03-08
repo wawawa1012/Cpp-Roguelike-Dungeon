@@ -63,9 +63,10 @@ bool UnionFind::unite(int i, int j) {
 // ==========================================
 // 类的成员函数实现
 // ==========================================
-DungeonGenerator::DungeonGenerator() : rng(rd()) {
+DungeonGenerator::DungeonGenerator(Player& player) : Hero(player),rng(rd()) {
     // 初始化地图，全部填满墙壁 '#'
     map.resize(MAP_HEIGHT, vector<char>(MAP_WIDTH, '#'));
+    fovMap.resize(MAP_HEIGHT, vector<int>(MAP_WIDTH, 0));
 }
 
 // 计算房间 A 和房间 B 中心点之间的曼哈顿距离
@@ -94,6 +95,41 @@ void DungeonGenerator::digCorridor(const Room& roomA, const Room& roomB) {
     } else {
         for (int y = std::min(startY, endY); y <= std::max(startY, endY); ++y) map[y][startX] = '.';
         for (int x = std::min(startX, endX); x <= std::max(startX, endX); ++x) map[endY][x] = '.';
+    }
+}
+
+void DungeonGenerator::updateFOV()
+{
+    for (int y=0;y<MAP_HEIGHT;y++)
+    {
+        for (int x=0;x<MAP_WIDTH;x++)
+        {
+            if (fovMap[y][x]==2)
+            {
+                fovMap[y][x]=1;//降级为visited
+            }
+        }
+    }
+    int radius = 5; //视野半径
+    int leftMost=max(Hero.x-radius,0);
+    int rightMost=min(Hero.x+radius,MAP_WIDTH);
+    int highest=max(Hero.y-radius,0);
+    int lowest=min(Hero.y+radius,MAP_HEIGHT);
+    for (int y=highest;y<lowest;y++)
+    {
+        for (int x=leftMost;x<rightMost;x++)
+        {
+            fovMap[y][x]=2;
+        }
+    }
+}
+
+void DungeonGenerator::addLogMessage(const std::string& msg)
+{
+    messageLog.push_back(msg);
+    if (messageLog.size()>3)
+    {
+        messageLog.erase(messageLog.begin()); //fifo队列
     }
 }
 
@@ -241,11 +277,12 @@ void DungeonGenerator::printEdgesCount() const {
 // ==========================================
 // 引擎心脏：主游戏循环 (Game Loop)
 // ==========================================
-void DungeonGenerator::play()
+bool DungeonGenerator::play()
 {
     hideCursor();
 
     while (true) {
+        updateFOV();
         // 1. Render (渲染阶段)
         setCursorPosition(0,0);
 
@@ -255,7 +292,19 @@ void DungeonGenerator::play()
                 if (x == Hero.x && y == Hero.y) {
                     cout << "@ "; // 英雄的化身
                 } else {
-                    cout << map[y][x] << " ";
+                    if (fovMap[y][x]==0)  //未知
+                    {
+                        cout<<"  ";
+                    }
+                    else if (fovMap[y][x]==1) //已访问但不在视野内
+                    {
+                        if (map[y][x]=='E'||map[y][x]=='B')
+                        {
+                            cout<<". ";
+                        }
+                        else cout<<map[y][x]<<" ";
+                    }
+                    else cout<<map[y][x]<<" ";
                 }
             }
             cout << endl;
@@ -264,12 +313,22 @@ void DungeonGenerator::play()
      << " | ATK: " << Hero.atk
      << " | 当前宝藏数: " << Hero.score
      << "                                      " << endl;
+        // 打印固定的 3 行日志，不足 3 行用空行补齐，每行末尾加大量空格清除残影
+        for (int i = 0; i < 3; ++i) {
+            if (i < messageLog.size()) {
+                // 打印日志，并在末尾追加 40 个空格来洗掉残影
+                cout << messageLog[i] << "                                        " << endl;
+            } else {
+                // 如果当前没有那么多日志，也必须打印纯空格的空行来覆盖旧画面
+                cout << "                                                                " << endl;
+            }
+        }
 
         // 2. Input & Update (输入与更新阶段)
         char input = _getch(); // 瞬间捕获键盘按键，不需要回车
 
         // 按下 Esc 键 (ASCII码 27) 退出游戏
-        if (input == 27) break;
+        if (input == 27) return false;
 
         // 3. 处理移动与碰撞检测
         int targetX = Hero.x;
@@ -290,9 +349,11 @@ void DungeonGenerator::play()
                     if (enemies[i].x == targetX && enemies[i].y == targetY)
                     {
                         enemies[i].hp -= Hero.atk;
+                        addLogMessage("英雄挥剑，对黑暗子民造成了 " + std::to_string(Hero.atk) + " 点伤害！");
                         if (enemies[i].hp <= 0)
                         {
                             enemies.erase(enemies.begin() + i);
+                            addLogMessage("黑暗子民化作了尘埃...");
                             map[targetY][targetX] = '.';
                         }
                         break;
@@ -303,13 +364,16 @@ void DungeonGenerator::play()
             else if (map[targetY][targetX] != '#')
             {
                 Hero.y=targetY;Hero.x=targetX;
+                if (map[Hero.y][Hero.x]=='>') return true;  //进入下一层
             }
         }
         // 拾取宝藏逻辑
         if (map[Hero.y][Hero.x]=='T') {
             Hero.score+=1;
+            addLogMessage("你发现了一个闪闪发光的宝箱！");
             map[Hero.y][Hero.x]='.';
         }
+
         // ==========================================================
         // 【敌人回合开始】
         // ==========================================================
@@ -320,6 +384,7 @@ void DungeonGenerator::play()
             if (dist==1)        //距离为一开始对战
             {
                 Hero.hp-=enemies[i].atk;
+                addLogMessage("黑暗子民在黑暗中袭击了你！失去 " + std::to_string(enemies[i].atk) + " HP！");
                 continue;
             }
             if (dist>1&&dist<8)
@@ -364,41 +429,37 @@ void DungeonGenerator::play()
             cout << "\n      按任意键接受命运..." << endl;
 
             _getch(); // 挂起，让玩家绝望地看着死亡画面
-            return;   // 【极其关键】用 return 直接彻底终结整个 play() 函数！跳回主函数！
+            return false;   // 【极其关键】用 return 直接彻底终结整个 play() 函数！跳回主函数！
         }
     }
 }
 int main() {
-    // 强制控制台使用 UTF-8 编码，防止中文变问号
     SetConsoleOutputCP(CP_UTF8);
 
-    while (true) {
-        system("cls"); // 每次轮回前，把屏幕擦干净
-        cout << "--- Hades2：地牢生成器初始化 ---" << endl;
+    // 1. 英雄降临！玩家的生命周期现在和整个游戏一样长了
+    Player mainHero;
+    int currentFloor = 1; // 记录当前层数
 
-        // 【重生机制】：每次循环都会调用构造函数，生成一个全新的、满血的、带新地图的平行宇宙！
-        DungeonGenerator dungeon;
+    while (true) {
+        system("cls");
+        cout << "--- Hades2：地牢生成器初始化 --- 深入层数: " << currentFloor << endl;
+
+        // 2. 依赖注入：把我们的 mainHero 塞进新生成的平行宇宙里
+        DungeonGenerator dungeon(mainHero);
         dungeon.generateRooms();
 
-        // 既然是游戏了，就别提前把地图全貌打印出来剧透了
-        // dungeon.printMap();  <-- 可以把这行注释掉或者删掉！
-        dungeon.printEdgesCount();
-
         cout << "\n按任意键踏入地牢..." << endl;
-        _getch(); // 替换掉原来的 system("pause")，体验更连贯
+        _getch();
 
-        // 启动游戏主循环。如果你在里面死了，play() 会执行 return，就会回到这里。
-        dungeon.play();
+        // 3. 状态机：接收 play() 的审判结果
+        bool survived = dungeon.play();
 
-        // =====================================
-        // 从 play() 归来，说明玩家死了（或者通关了）
-        // =====================================
-        system("cls");
-        cout << "是否要再次挑战冥界？(Y/N): ";
-        char choice = _getch();
-        if (choice == 'n' || choice == 'N') {
-            break; // 彻底打破轮回，退出程序
+        if (!survived) {
+            break; // 死了或者主动退出，直接打破轮回
         }
+
+        // 能活着走到这一行，说明下楼了。层数+1，自然进入下一次循环
+        currentFloor++;
     }
 
     return 0;
