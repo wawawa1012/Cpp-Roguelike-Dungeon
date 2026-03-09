@@ -23,6 +23,7 @@ private:
     Player& Hero;
     std::vector<Enemy> enemies; //用来存储全图所有怪物的数组
     std::vector<std::string> messageLog;
+    int depth; //记录层数
     
     // 随机数引擎必须在类声明中占位，保证内存布局完整
     std::random_device rd;
@@ -35,7 +36,7 @@ private:
     void addLogMessage(const std::string& msg);
 
 public:
-    DungeonGenerator(Player& player);
+    DungeonGenerator(Player& player,int floor);
     void generateRooms();
     void printMap() const;
     void printEdgesCount() const;

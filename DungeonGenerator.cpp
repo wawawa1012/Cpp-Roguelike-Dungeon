@@ -63,7 +63,7 @@ bool UnionFind::unite(int i, int j) {
 // ==========================================
 // 类的成员函数实现
 // ==========================================
-DungeonGenerator::DungeonGenerator(Player& player) : Hero(player),rng(rd()) {
+DungeonGenerator::DungeonGenerator(Player& player,int floor) : Hero(player),depth(floor),rng(rd()) {
     // 初始化地图，全部填满墙壁 '#'
     map.resize(MAP_HEIGHT, vector<char>(MAP_WIDTH, '#'));
     fovMap.resize(MAP_HEIGHT, vector<int>(MAP_WIDTH, 0));
@@ -231,7 +231,13 @@ void DungeonGenerator::generateRooms() {
         int centerY = room.y + room.height / 2;
 
         if (room.type == RoomType::START) map[centerY][centerX] = 'S';
-        else if (room.type == RoomType::BOSS) map[centerY][centerX] = 'B';
+        else if (room.type == RoomType::BOSS)
+        {
+            map[centerY][centerX] = 'B';
+            Enemy newEnemy={centerX,centerY,30+(depth-1)*15,4+(depth-1)*2,'B',50};
+            enemies.push_back(newEnemy);
+            map[newEnemy.y][newEnemy.x] = newEnemy.symbol;
+        }
         else if (room.type == RoomType::TREASURE) map[centerY][centerX] = 'T';
     }
 
@@ -251,7 +257,7 @@ void DungeonGenerator::generateRooms() {
             int monsterCount = countDist(rng);
 
             for (int i = 0; i < monsterCount; ++i) {
-                Enemy newEnemy = {enemyX(rng), enemyY(rng), 10, 2, 'E'};
+                Enemy newEnemy = {enemyX(rng), enemyY(rng), 10+(depth-1)*5, 2+(depth-1)*1, 'E',5+(depth-1)*2};
                 enemies.push_back(newEnemy);
                 map[newEnemy.y][newEnemy.x] = newEnemy.symbol;
             }
@@ -311,7 +317,8 @@ bool DungeonGenerator::play()
         }
         cout << "HP: " << Hero.hp << "/" << Hero.maxHp
      << " | ATK: " << Hero.atk
-     << " | 当前宝藏数: " << Hero.score
+     << " | 当前宝藏数: " << Hero.score<<" | 当前等级: "<<Hero.level
+     <<" | 当前经验值: "<<Hero.exp<< "/" << Hero.maxExp
      << "                                      " << endl;
         // 打印固定的 3 行日志，不足 3 行用空行补齐，每行末尾加大量空格清除残影
         for (int i = 0; i < 3; ++i) {
@@ -342,7 +349,7 @@ bool DungeonGenerator::play()
         }
         // 如果玩家试图移动了
         if (targetX != Hero.x || targetY != Hero.y) {
-            if (map[targetY][targetX] == 'E')
+            if (map[targetY][targetX] == 'E'||map[targetY][targetX] == 'B')
             {
                 for (int i = 0; i < enemies.size(); i++)
                 {
@@ -350,11 +357,21 @@ bool DungeonGenerator::play()
                     {
                         enemies[i].hp -= Hero.atk;
                         addLogMessage("英雄挥剑，对黑暗子民造成了 " + std::to_string(Hero.atk) + " 点伤害！");
-                        if (enemies[i].hp <= 0)
+                        if (enemies[i].hp <= 0) //怪物死亡逻辑
                         {
+                            int gainedExp = enemies[i].expReward;
+                            if (enemies[i].symbol=='E'){
+                                addLogMessage("黑暗子民化作了尘埃...");
+                                map[targetY][targetX] = '.';
+                            }
+                            else if (enemies[i].symbol=='B')
+                            {
+                                addLogMessage("Boss 轰然倒塌，通往深渊的阶梯出现了！");
+                                map[targetY][targetX] = '>';
+                            }
                             enemies.erase(enemies.begin() + i);
-                            addLogMessage("黑暗子民化作了尘埃...");
-                            map[targetY][targetX] = '.';
+                            Hero.exp += gainedExp;
+                            Hero.checkLevelUp(messageLog);
                         }
                         break;
                     }
@@ -369,9 +386,26 @@ bool DungeonGenerator::play()
         }
         // 拾取宝藏逻辑
         if (map[Hero.y][Hero.x]=='T') {
+            uniform_int_distribution<int> lootDist(1, 100);
+            int roll = lootDist(rng);
+            if (roll>0&&roll<=40)
+            {
+                Hero.hp=min(Hero.maxHp,Hero.hp+50);
+                addLogMessage("你饮下生命药水，恢复了 50 点生命！");
+            }
+            else if (roll>40&&roll<=70)
+            {
+                Hero.atk+=3;
+                addLogMessage("你捡起战神磨刀石，武器变得更加锋利！ATK +3");
+            }
+            else
+            {
+                Hero.maxHp+=20;
+                Hero.hp+=20;
+                addLogMessage("你融合了巨人之心！最大生命值 +20！");
+            }
+            map[Hero.y][Hero.x] = '.';
             Hero.score+=1;
-            addLogMessage("你发现了一个闪闪发光的宝箱！");
-            map[Hero.y][Hero.x]='.';
         }
 
         // ==========================================================
@@ -445,7 +479,7 @@ int main() {
         cout << "--- Hades2：地牢生成器初始化 --- 深入层数: " << currentFloor << endl;
 
         // 2. 依赖注入：把我们的 mainHero 塞进新生成的平行宇宙里
-        DungeonGenerator dungeon(mainHero);
+        DungeonGenerator dungeon(mainHero,currentFloor);
         dungeon.generateRooms();
 
         cout << "\n按任意键踏入地牢..." << endl;
