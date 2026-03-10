@@ -35,6 +35,8 @@ struct Player
     int level = 1;
     int exp = 0;
     int maxExp = 10;
+    int mp=20;
+    int maxMp = 20;
     // 传入 messageLog 的引用，玩家自己往里面写升级日志！
     void checkLevelUp(std::vector<std::string>& log) {
         while (exp >= maxExp) {
@@ -44,6 +46,8 @@ struct Player
             atk += 2;
             maxHp += 10;
             hp = maxHp; // 升级回满血
+            maxMp+=5;
+            mp=maxMp;
             log.push_back("你升到了 " + std::to_string(level) + " 级！属性全面提升！");
 
             // 为了维持 3 行 UI 的规矩，还要在玩家这里处理一下队列长度

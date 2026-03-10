@@ -7,6 +7,10 @@
 
 using namespace std;
 
+void setColor(int colorCode) {
+    HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleTextAttribute(hConsole, colorCode);
+}
 // Windows API：将控制台光标瞬间移动到指定坐标 (x, y)，解决闪屏Bug
 void setCursorPosition(int x, int y) {
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -133,6 +137,26 @@ void DungeonGenerator::addLogMessage(const std::string& msg)
     }
 }
 
+// 判断两点之间是否畅通（仅支持直线）
+bool isLineOfSightClear(const vector<vector<char>>& map, int x1, int y1, int x2, int y2) {
+    if (x1 != x2 && y1 != y2) return false; // 不在同一直线，无法射击
+
+    if (x1 == x2) { // 垂直方向
+        int startY = min(y1, y2) + 1;
+        int endY = max(y1, y2);
+        for (int y = startY; y < endY; ++y) {
+            if (map[y][x1] == '#') return false; // 被墙挡住了
+        }
+    } else { // 水平方向
+        int startX = min(x1, x2) + 1;
+        int endX = max(x1, x2);
+        for (int x = startX; x < endX; ++x) {
+            if (map[y1][x] == '#') return false;
+        }
+    }
+    return true;
+}
+
 void DungeonGenerator::generateRooms() {
     uniform_int_distribution<int> sizeDist(4, 8);
 
@@ -257,7 +281,12 @@ void DungeonGenerator::generateRooms() {
             int monsterCount = countDist(rng);
 
             for (int i = 0; i < monsterCount; ++i) {
-                Enemy newEnemy = {enemyX(rng), enemyY(rng), 10+(depth-1)*5, 2+(depth-1)*1, 'E',5+(depth-1)*2};
+                uniform_int_distribution<int> typeDist(1, 100);
+                char symbol = (typeDist(rng) <= 30) ? 'A' : 'E';
+                // 弓箭手血量脆一点，攻击力稍微高一点
+                int hp = (symbol == 'A') ? 5 + (depth - 1) * 3 : 10 + (depth - 1) * 5;
+                int atk = (symbol == 'A') ? 3 + (depth - 1) * 2 : 2 + (depth - 1) * 1;
+                Enemy newEnemy = {enemyX(rng), enemyY(rng), hp, atk, symbol, 5 + (depth - 1) * 2};
                 enemies.push_back(newEnemy);
                 map[newEnemy.y][newEnemy.x] = newEnemy.symbol;
             }
@@ -295,27 +324,48 @@ bool DungeonGenerator::play()
         // 动态覆盖打印：如果是英雄的坐标，就打印 '@'，否则打印地图原本的字符
         for (int y = 0; y < MAP_HEIGHT; ++y) {
             for (int x = 0; x < MAP_WIDTH; ++x) {
+                // 1. 渲染主角 (最优先)
                 if (x == Hero.x && y == Hero.y) {
-                    cout << "@ "; // 英雄的化身
-                } else {
-                    if (fovMap[y][x]==0)  //未知
-                    {
-                        cout<<"  ";
+                    setColor(10); // 10 是高亮绿色
+                    cout << "@ ";
+                    setColor(7);  // 7 是默认白色，【极其关键】每次用完必须洗掉刷子！
+                }
+                else {
+                    // 2. 渲染黑夜
+                    if (fovMap[y][x] == 0) {
+                        cout << "  ";
                     }
-                    else if (fovMap[y][x]==1) //已访问但不在视野内
-                    {
-                        if (map[y][x]=='E'||map[y][x]=='B')
-                        {
-                            cout<<". ";
+                    // 3. 渲染迷雾记忆 (不在视野内)
+                    else if (fovMap[y][x] == 1) {
+                        setColor(8); // 8 是暗灰色，营造一种“过去”的氛围感
+                        if (map[y][x] == 'E' || map[y][x] == 'B' || map[y][x] == 'A') { // 连同弓箭手一起遮蔽
+                            cout << ". "; // 掩耳盗铃，隐藏怪物
+                        } else {
+                            cout << map[y][x] << " ";
                         }
-                        else cout<<map[y][x]<<" ";
+                        setColor(7); // 恢复白色
                     }
-                    else cout<<map[y][x]<<" ";
+                    // 4. 渲染真实视野 (万物显形！)
+                    else {
+                        char tile = map[y][x]; // 先把这个格子的东西拿在手里
+
+                        // 核心：根据不同物体换刷子
+                        if (tile == 'E') setColor(12);      // 12 是高亮红色 (危险小怪)
+                        else if (tile == 'A') setColor(12); // 射手也是红色
+                        else if (tile == 'B') setColor(13); // 13 是紫色 (深渊Boss)
+                        else if (tile == 'T') setColor(14); // 14 是金黄色 (宝藏盲盒)
+                        else if (tile == '>') setColor(11); // 11 是青色 (传送门/下楼)
+                        else setColor(7);                   // 墙壁和地板保持白色
+
+                        cout << tile << " "; // 上好色后，狠狠地印上去
+                        setColor(7);         // 再次洗掉刷子
+                    }
                 }
             }
             cout << endl;
         }
         cout << "HP: " << Hero.hp << "/" << Hero.maxHp
+        <<" | MP: "<<Hero.mp<<"/"<<Hero.maxMp
      << " | ATK: " << Hero.atk
      << " | 当前宝藏数: " << Hero.score<<" | 当前等级: "<<Hero.level
      <<" | 当前经验值: "<<Hero.exp<< "/" << Hero.maxExp
@@ -341,15 +391,71 @@ bool DungeonGenerator::play()
         int targetX = Hero.x;
         int targetY = Hero.y;
 
-        switch (input) {
-        case 'w': case 'W': targetY -= 1; break;
-        case 's': case 'S': targetY += 1; break;
-        case 'a': case 'A': targetX -= 1; break;
-        case 'd': case 'D': targetX += 1; break;
+        switch (input)
+        {
+        case 'w':
+        case 'W': targetY -= 1;
+            break;
+        case 's':
+        case 'S': targetY += 1;
+            break;
+        case 'a':
+        case 'A': targetX -= 1;
+            break;
+        case 'd':
+        case 'D': targetX += 1;
+            break;
+        case 'j':
+        case 'J': {
+                if (Hero.mp >= 10) {
+                    Hero.mp -= 10;
+                    addLogMessage("你释放了剑刃风暴！席卷了周围的黑暗！");
+
+                    // 核心重构：倒序遍历敌人数组！这是 C++ 中安全使用 erase() 删除多个元素的高级技巧
+                    for (int i = enemies.size() - 1; i >= 0; i--) {
+                        // 判断怪物是否在主角的九宫格内 (X和Y的曼哈顿距离拆分：也就是绝对差值都 <= 1)
+                        if (abs(enemies[i].x - Hero.x) <= 1 && abs(enemies[i].y - Hero.y) <= 1) {
+
+                            enemies[i].hp -= (Hero.atk * 2); // 造成双倍真实伤害
+
+                            if (enemies[i].hp <= 0) { // 怪物死亡结算
+                                int gainedExp = enemies[i].expReward;
+
+                                // 精准擦除死亡怪物原本的坐标！
+                                if (enemies[i].symbol == 'E' || enemies[i].symbol == 'A') { // 修复：射手死亡正确清空残影
+                                    addLogMessage("黑暗子民在剑刃风暴中化作了尘埃...");
+                                    map[enemies[i].y][enemies[i].x] = '.';
+                                } else if (enemies[i].symbol == 'B') {
+                                    addLogMessage("Boss 被剑刃风暴绞杀，通往深渊的阶梯出现了！");
+                                    map[enemies[i].y][enemies[i].x] = '>';
+                                }
+
+                                enemies.erase(enemies.begin() + i); // 倒序删除，绝对安全
+                                Hero.exp += gainedExp;
+                            }
+                        }
+                    }
+                    // 扫尾工作：经验统一加完后，统一结算升级（防止一次杀多只怪刷屏日志）
+                    Hero.checkLevelUp(messageLog);
+                }
+                else {
+                    addLogMessage("法力值不足！");
+                }
+                break;
         }
+        case 'r':
+        case 'R':
+            {
+                Hero.mp=min(Hero.maxMp,Hero.mp+5);
+                addLogMessage("你深吸一口气，回复了 5 点法力");
+            }
+            break;
+        }
+
         // 如果玩家试图移动了
         if (targetX != Hero.x || targetY != Hero.y) {
-            if (map[targetY][targetX] == 'E'||map[targetY][targetX] == 'B')
+            // 修复：修复了多余的 ) 并且加入了 'A' 的碰撞判定
+            if (map[targetY][targetX] == 'E' || map[targetY][targetX] == 'B' || map[targetY][targetX] == 'A')
             {
                 for (int i = 0; i < enemies.size(); i++)
                 {
@@ -360,11 +466,11 @@ bool DungeonGenerator::play()
                         if (enemies[i].hp <= 0) //怪物死亡逻辑
                         {
                             int gainedExp = enemies[i].expReward;
-                            if (enemies[i].symbol=='E'){
+                            if (enemies[i].symbol == 'E' || enemies[i].symbol == 'A'){ // 修复：射手死亡正确清空残影
                                 addLogMessage("黑暗子民化作了尘埃...");
                                 map[targetY][targetX] = '.';
                             }
-                            else if (enemies[i].symbol=='B')
+                            else if (enemies[i].symbol == 'B')
                             {
                                 addLogMessage("Boss 轰然倒塌，通往深渊的阶梯出现了！");
                                 map[targetY][targetX] = '>';
@@ -384,6 +490,7 @@ bool DungeonGenerator::play()
                 if (map[Hero.y][Hero.x]=='>') return true;  //进入下一层
             }
         }
+
         // 拾取宝藏逻辑
         if (map[Hero.y][Hero.x]=='T') {
             uniform_int_distribution<int> lootDist(1, 100);
@@ -421,32 +528,52 @@ bool DungeonGenerator::play()
                 addLogMessage("黑暗子民在黑暗中袭击了你！失去 " + std::to_string(enemies[i].atk) + " HP！");
                 continue;
             }
-            if (dist>1&&dist<8)
+            if (dist > 1 && dist < 8)
             {
+                // ========== 弓箭手 AI 分支 ==========
+                if (enemies[i].symbol == 'A' && isLineOfSightClear(map, enemies[i].x, enemies[i].y, Hero.x, Hero.y)) {
+                    // 1. 扣血结算
+                    Hero.hp -= enemies[i].atk;
+                    addLogMessage("弓箭手在暗处射出了一箭！失去 " + std::to_string(enemies[i].atk) + " HP！");
+
+                    // 2. 渲染瞬间的激光弹道 (肉鸽爽感来源)
+                    setColor(14); // 黄色激光
+                    if (enemies[i].x == Hero.x) { // 垂直射击
+                        for (int y = min(enemies[i].y, Hero.y) + 1; y < max(enemies[i].y, Hero.y); ++y) {
+                            setCursorPosition(enemies[i].x * 2, y); // 注意控制台x坐标通常需要 *2 适应字符宽度，具体看你的排版
+                            cout << "|";
+                        }
+                    } else { // 水平射击
+                        for (int x = min(enemies[i].x, Hero.x) + 1; x < max(enemies[i].x, Hero.x); ++x) {
+                            setCursorPosition(x * 2, enemies[i].y);
+                            cout << "-";
+                        }
+                    }
+                    setColor(7);
+                    Sleep(50); // 极短的停顿，让玩家肉眼能捕捉到这道激光残影！
+
+                    continue; // 射击完毕，本回合不再移动
+                }
+
+                // ========== 经典的贪心寻路 AI (所有怪共用) ==========
                 int nextX = enemies[i].x, nextY = enemies[i].y;
-                int distX=Hero.x-enemies[i].x;
-                int distY=Hero.y-enemies[i].y;
-                // 决定先走 X 轴还是先走 Y 轴 (优先缩短距离差距更大的那条轴)
-                if (abs(distX) > abs(distY))
-                {
-                    // 走 X 轴
-                    if (distX > 0) nextX += 1;       // Hero 在右，往右走
-                    else if (distX < 0) nextX -= 1;  // Hero 在左，往左走
+                int distX = Hero.x - enemies[i].x;
+                int distY = Hero.y - enemies[i].y;
+                // 优先走距离差距更大的轴
+                if (abs(distX) > abs(distY)) {
+                    if (distX > 0) nextX += 1; else if (distX < 0) nextX -= 1;
+                } else {
+                    if (distY > 0) nextY += 1; else if (distY < 0) nextY -= 1;
                 }
-                else
-                {
-                    // 走 Y 轴
-                    if (distY > 0) nextY += 1;       // Hero 在下，往下走
-                    else if (distY < 0) nextY -= 1;  // Hero 在上，往上走
-                }
-                if (map[nextY][nextX]=='.')  //限制活动范围
-                {
-                    map[enemies[i].y][enemies[i].x]='.';
-                    enemies[i].x=nextX;enemies[i].y=nextY;
-                    map[nextY][nextX]=enemies[i].symbol;
+
+                if (map[nextY][nextX] == '.') {
+                    map[enemies[i].y][enemies[i].x] = '.';
+                    enemies[i].x = nextX; enemies[i].y = nextY;
+                    map[nextY][nextX] = enemies[i].symbol;
                 }
             }
-        }
+        } // 修复：这里补全了之前丢失的用来结束敌人 for 循环的大括号！
+
         // =====================================
         // 在怪物回合结束之后，添加死亡结算逻辑
         // =====================================
@@ -466,7 +593,10 @@ bool DungeonGenerator::play()
             return false;   // 【极其关键】用 return 直接彻底终结整个 play() 函数！跳回主函数！
         }
     }
+
+    return false; // 安全垫：防止编译器报 "control reaches end of non-void function"
 }
+
 int main() {
     SetConsoleOutputCP(CP_UTF8);
 
